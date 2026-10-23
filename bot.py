@@ -16,6 +16,9 @@ app = Flask(__name__)
 
 # База данных пользователей (в памяти)
 users_db = {}
+# Временное хранилище активных заказов, ожидающих проверки чека
+# Формат: user_id: {"game": ..., "package": ..., "price": ..., "method": ..., "player_id": ...}
+pending_orders = {}
 
 # ==================== ПРАЙС-ЛИСТ ====================
 PRICES = {
@@ -186,8 +189,8 @@ def show_help(message):
       "3. Выберите нужный пакет UC или алмазов.\n"
       "4. Выберите удобный способ оплаты (Dushanbe City или Alif).\n"
       "5. Отправьте ваш Player ID (числовой ID).\n"
-      "6. Переведите сумму на указанный номер и отправьте чек.\n\n"
-      "⏱ Время зачисления: обычно от 2 до 5 минут после подтверждения оплаты."
+      "6. Переведите сумму на указанный номер и отправьте чек (фото/скриншот) в этот чат.\n\n"
+      "⏱ Время зачисления: обычно от 2 до 5 минут после проверки чека."
   )
   bot.send_message(
       message.chat.id, help_text, reply_markup=main_keyboard()
@@ -199,7 +202,7 @@ def show_contacts(message):
   contacts_text = (
       "📞 КОНТАКТЫ И ПОДДЕРЖКА\n"
       "-----------------------------------\n"
-      "По всем вопросам и отправке чеков обращайтесь к администратору:\n"
+      "По всем вопросам обращайтесь к администратору:\n"
       f"Связь: @MNG_STABBY\n"
       f"Официальный кошелек: {WALLET_NUMBER}"
   )
@@ -352,6 +355,7 @@ def process_player_id(message):
   player_id = message.text.strip()
   user_data["state"]["player_id"] = player_id
   user_data["state"]["awaiting_id"] = False
+  user_data["state"]["awaiting_receipt"] = True  # Ждем чек от пользователя
 
   game = user_data["state"].get("game", "Игра")
   package = user_data["state"].get("package", "Пакет")
@@ -367,31 +371,10 @@ def process_player_id(message):
     final_price = base_price
     discount_note = "Без скидки"
 
-  if (
-      user_data["referred_by"]
-      and not user_data["has_contributed"]
-  ):
-    user_data["has_contributed"] = True
-    ref_id = user_data["referred_by"]
-    if ref_id in users_db:
-      users_db[ref_id]["referrals"] += 1
-      if users_db[ref_id]["referrals"] % 10 == 0:
-        users_db[ref_id]["discounts_available"] += 1
-        bot.send_message(
-            ref_id,
-            "🎉 Поздравляем! Один из ваших приглашенных друзей совершил"
-            " покупку. Вы накопили 10 рефералов и получили одноразовую скидку"
-            " 10%!",
-        )
-      else:
-        bot.send_message(
-            ref_id,
-            "👥 Ваш приглашенный друг совершил покупку! Вам зачислен 1"
-            " реферал.",
-        )
+  user_data["state"]["final_price"] = final_price
 
   summary_text = (
-      "🎉 Заявка успешно оформлена!\n"
+      "🎉 Заявка создана!\n"
       "-----------------------------------\n"
       f"Игра: {game}\n"
       f"Товар: {package}\n"
@@ -402,26 +385,164 @@ def process_player_id(message):
       "-----------------------------------\n\n"
       "📌 Куда переводить деньги?\n"
       f"Переведите {final_price:.1f} TJS на номер {method}:\n"
-      f"{WALLET_NUMBER}\n\n"
-      "📲 После перевода отправьте скриншот/чек администратору!"
+      f"`{WALLET_NUMBER}`\n\n"
+      "📲 **Отправьте скриншот или фото чека в этот чат прямо сейчас!**"
   )
 
   bot.send_message(
-      message.chat.id, summary_text, reply_markup=main_keyboard()
+      message.chat.id, summary_text, parse_mode="Markdown", reply_markup=main_keyboard()
   )
 
-  admin_notification = (
-      "🚨 НОВАЯ ЗАЯВКА НА ПОПОЛНЕНИЕ!\n"
+
+# ==================== ОБРАБОТКА ЧЕКОВ (ФОТО) ====================
+@bot.message_handler(
+    content_types=["photo"],
+    func=lambda message: get_user_data(message.from_user.id)
+    .get("state", {})
+    .get("awaiting_receipt", False),
+)
+def handle_receipt(message):
+  user_id = message.from_user.id
+  user_data = get_user_data(user_id)
+  state = user_data["state"]
+
+  state["awaiting_receipt"] = False
+
+  game = state.get("game", "Игра")
+  package = state.get("package", "Пакет")
+  player_id = state.get("player_id", "N/A")
+  method = state.get("method", "Карта")
+  final_price = state.get("final_price", 0)
+
+  # Сохраняем во временное хранилище для админа
+  pending_orders[user_id] = {
+      "user_id": user_id,
+      "game": game,
+      "package": package,
+      "player_id": player_id,
+      "final_price": final_price,
+  }
+
+  bot.reply_to(
+      message,
+      "⏳ **Чек принят!** Он отправлен администратору на проверку. Ожидайте"
+      " зачисления в течение нескольких минут.",
+      parse_mode="Markdown",
+  )
+
+  # Кнопки для администратора под чеком
+  admin_markup = types.InlineKeyboardMarkup(row_width=2)
+  admin_markup.add(
+      types.InlineKeyboardButton(
+          "✅ Одобрить", callback_data=f"approve_{user_id}"
+      ),
+      types.InlineKeyboardButton("❌ Отказать", callback_data=f"reject_{user_id}"),
+  )
+
+  caption_text = (
+      "🚨 **НОВАЯ ОПЛАТА / ЧЕК НА ПРОВЕРКУ!**\n"
       "-----------------------------------\n"
-      f"Клиент: @{message.from_user.username or 'без_юзернейма'} (ID: {user_id})\n"
-      f"Игра: {game}\n"
-      f"Пакет: {package}\n"
-      f"Player ID: {player_id}\n"
-      f"Оплата: {method} ({WALLET_NUMBER})\n"
-      f"К оплате: {final_price:.1f} TJS\n"
+      f"👤 Клиент: @{message.from_user.username or 'без_юзернейма'} (ID: `{user_id}`)\n"
+      f"🎮 Игра: {game}\n"
+      f"📦 Пакет: {package}\n"
+      f"🆔 Player ID: `{player_id}`\n"
+      f"💳 Оплата: {method}\n"
+      f"💰 Сумма: **{final_price:.1f} TJS**\n"
       "-----------------------------------"
   )
-  bot.send_message(ADMIN_ID, admin_notification)
+
+  # Берем самое качественное фото чека
+  photo_id = message.photo[-1].file_id
+  bot.send_photo(
+      ADMIN_ID,
+      photo_id,
+      caption=caption_text,
+      parse_mode="Markdown",
+      reply_markup=admin_markup,
+  )
+
+
+# ==================== КНОПКИ УПРАВЛЕНИЯ ДЛЯ АДМИНА ====================
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_", "reject_")))
+def admin_decision(call):
+  if call.from_user.id != ADMIN_ID:
+    bot.answer_callback_query(call.id, "⛔ У вас нет прав администратора.", show_alert=True)
+    return
+
+  action, target_user_id_str = call.data.split("_")
+  target_user_id = int(target_user_id_str)
+
+  bot.answer_callback_query(call.id)
+
+  if action == "approve":
+    # 1. Начисляем реферал (если клиент чей-то реферал и еще не покупал)
+    target_data = get_user_data(target_user_id)
+    if (
+        target_data["referred_by"]
+        and not target_data["has_contributed"]
+    ):
+      target_data["has_contributed"] = True
+      ref_id = target_data["referred_by"]
+      if ref_id in users_db:
+        users_db[ref_id]["referrals"] += 1
+        if users_db[ref_id]["referrals"] % 10 == 0:
+          users_db[ref_id]["discounts_available"] += 1
+          bot.send_message(
+              ref_id,
+              "🎉 Поздравляем! Один из ваших приглашенных друзей успешно"
+              " оплатил заказ. Вы накопили 10 рефералов и получили одноразовую"
+              " скидку 10%!",
+          )
+        else:
+          bot.send_message(
+              ref_id,
+              "👥 Ваш приглашенный друг совершил и оплатил покупку! Вам"
+              " зачислен 1 реферал.",
+          )
+
+    # 2. Уведомляем клиента об успешной оплате
+    try:
+      bot.send_message(
+          target_user_id,
+          "✅ **Оплата успешно подтверждена администратором!**\n\n"
+          "Ваш заказ передан в обработку, UC / алмазы будут зачислены на ваш аккаунт в течение 2–3 минут. Спасибо, что выбрали нас! 🚀",
+          parse_mode="Markdown",
+      )
+    except Exception:
+      pass
+
+    # Обновляем сообщение у админа
+    bot.edit_message_caption(
+        call.message.chat.id,
+        call.message.message_id,
+        caption=call.message.caption + "\n\n🟢 **СТАТУС: ОДОБРЕНО ✅**",
+        parse_mode="Markdown",
+        reply_markup=None,
+    )
+
+  elif action == "reject":
+    # Уведомляем клиента об отказе
+    try:
+      bot.send_message(
+          target_user_id,
+          "❌ **К сожалению, ваша оплата была отклонена администратором.**\n\n"
+          "Возникла проблема с чеком или переводом. Пожалуйста, обратитесь в поддержку: @MNG_STABBY",
+          parse_mode="Markdown",
+      )
+    except Exception:
+      pass
+
+    # Обновляем сообщение у админа
+    bot.edit_message_caption(
+        call.message.chat.id,
+        call.message.message_id,
+        caption=call.message.caption + "\n\n🔴 **СТАТУС: ОТКЛОНЕНО ❌**",
+        parse_mode="Markdown",
+        reply_markup=None,
+    )
+
+  if target_user_id in pending_orders:
+    del pending_orders[target_user_id]
 
 
 # ==================== ПАНЕЛЬ АДМИНИСТРАТОРА ====================
