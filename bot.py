@@ -8,6 +8,9 @@ from telebot import types
 TOKEN = "8983343058:AAH35u-bqLnEFHWKK52yKwq1lc0Nx9BtUbc"
 ADMIN_ID = 6738122971
 
+# ВАШ НОМЕР ДЛЯ ОПЛАТЫ (Dushanbe City / Alif)
+WALLET_NUMBER = "+992006443155"
+
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
@@ -74,10 +77,13 @@ def get_user_data(user_id):
 def main_keyboard():
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
-      types.KeyboardButton("🎮 PUBG Mobile"),
-      types.KeyboardButton("🔥 Free Fire"),
+      types.KeyboardButton("🛍 Сделать заказ"),
+      types.KeyboardButton("👤 Мой профиль"),
   )
-  markup.add(types.KeyboardButton("👤 Мой профиль / Рефералка"))
+  markup.add(
+      types.KeyboardButton("ℹ️ Помощь и правила"),
+      types.KeyboardButton("📞 Контакты"),
+  )
   return markup
 
 
@@ -96,12 +102,12 @@ def send_welcome(message):
         user_data["referred_by"] = referrer_id
         bot.send_message(
             message.chat.id,
-            "🎁 Вы зарегистрировались по реферальной ссылке! Как только вы"
+            "🎁 Вы успешно зарегистрировались по приглашению! Как только вы"
             " совершите первую покупку, вашему другу засчитается реферал.",
         )
         bot.send_message(
             referrer_id,
-            "🎉 По вашей ссылке зарегистрировался новый пользователь! Реферал"
+            "🎉 По вашей ссылке зарегистрировался новый игрок! Реферал"
             " засчитается после того, как он совершит покупку.",
         )
     except ValueError:
@@ -111,11 +117,12 @@ def send_welcome(message):
 
   welcome_text = (
       f"👋 **Салом, {message.from_user.first_name}!**\n\n"
-      f"Добро пожаловать в сервис моментального пополнения игр! 🚀\n\n"
-      f"💎 Выгодные цены на UC и Алмазы\n"
-      f"💳 Оплата через Dushanbe City / Alif\n"
-      f"🎁 Накопительная система скидок за друзей\n\n"
-      f"👇 **Выберите нужную игру в меню ниже:**"
+      f"Добро пожаловать в официальный бот моментального пополнения игр! 🚀\n\n"
+      f"💎 **PUBG Mobile UC** & **Free Fire Алмазы** по выгодным ценам.\n"
+      f"⚡️ Быстрое зачисление по ID (в течение 2–3 минут).\n"
+      f"💳 Удобная оплата через **Dushanbe City** и **Alif**.\n"
+      f"🎁 Приглашайте друзей и получайте скидки!\n\n"
+      f"👇 Воспользуйтесь меню ниже для управления:"
   )
 
   bot.send_message(
@@ -126,10 +133,25 @@ def send_welcome(message):
   )
 
 
-# ==================== ПРОФИЛЬ И РЕФЕРАЛКА ====================
-@bot.message_handler(
-    func=lambda message: message.text == "👤 Мой профиль / Рефералка"
-)
+# ==================== КНОПКИ ГЛАВНОГО МЕНЮ ====================
+@bot.message_handler(func=lambda message: message.text == "🛍 Сделать заказ")
+def menu_order(message):
+  markup = types.InlineKeyboardMarkup(row_width=2)
+  markup.add(
+      types.InlineKeyboardButton(
+          "🎮 PUBG Mobile", callback_data="game_PUBG Mobile"
+      ),
+      types.InlineKeyboardButton("🔥 Free Fire", callback_data="game_Free Fire"),
+  )
+  bot.send_message(
+      message.chat.id,
+      "🎮 **Выберите нужную игру для пополнения:**",
+      parse_mode="Markdown",
+      reply_markup=markup,
+  )
+
+
+@bot.message_handler(func=lambda message: message.text == "👤 Мой профиль")
 def show_profile(message):
   user_id = message.from_user.id
   user_data = get_user_data(user_id)
@@ -150,28 +172,63 @@ def show_profile(message):
       f"🎯 До следующей скидки: **{next_target} рефералов**\n"
       f"🎁 Доступно одноразовых скидок (10%): **{discounts} шт.**\n"
       f"━━━━━━━━━━━━━━━━━━━\n\n"
-      f"🔗 **Ваша реферальная ссылка:**\n`{ref_link}`\n\n"
-      f"💡 _Приглашайте друзей. Когда друг покупает UC или алмазы, вам"
-      f" засчитывается 1 реферал. За каждые 10 таких рефералов — скидка 10%!_"
+      f"🔗 **Ваша персональная реферальная ссылка:**\n`{ref_link}`\n\n"
+      f"💡 _Делитесь ссылкой с друзьями! Когда друг покупает UC или алмазы,"
+      f" вам засчитывается 1 реферал. За каждые 10 таких рефералов вы получаете"
+      f" скидку 10% на следующую покупку._"
   )
 
-  bot.send_message(message.chat.id, profile_text, parse_mode="Markdown")
+  bot.send_message(
+      message.chat.id, profile_text, parse_mode="Markdown", reply_markup=main_keyboard()
+  )
 
 
-# ==================== ВЫБОР ИГРЫ И ПАКЕТОВ ====================
-@bot.message_handler(
-    func=lambda message: message.text in ["🎮 PUBG Mobile", "🔥 Free Fire"]
-)
-def choose_game(message):
-  user_id = message.from_user.id
-  user_data = get_user_data(user_id)
-  game_name = message.text
+@bot.message_handler(func=lambda message: message.text == "ℹ️ Помощь и правила")
+def show_help(message):
+  help_text = (
+      f"ℹ️ **КАК ПОПОЛНИТЬ ИГРУ?**\n"
+      f"━━━━━━━━━━━━━━━━━━━\n"
+      f"1️⃣ Нажмите кнопку **«🛍 Сделать заказ»**.\n"
+      f"2️⃣ Выберите игру (**PUBG Mobile** или **Free Fire**).\n"
+      f"3️⃣ Выберите нужный пакет UC или алмазов.\n"
+      f"4️⃣ Выберите удобный способ оплаты (**Dushanbe City** или **Alif**).\n"
+      f"5️⃣ Отправьте ваш **Player ID** (игровой ID).\n"
+      f"6️⃣ Переведите сумму на указанный номер и отправьте чек.\n\n"
+      f"⏱ **Время зачисления:** обычно от 2 до 5 минут после подтверждения оплаты."
+  )
+  bot.send_message(
+      message.chat.id, help_text, parse_mode="Markdown", reply_markup=main_keyboard()
+  )
 
-  user_data["state"] = {"game": game_name}
+
+@bot.message_handler(func=lambda message: message.text == "📞 Контакты")
+def show_contacts(message):
+  contacts_text = (
+      f"📞 **КОНТАКТЫ И ПОДДЕРЖКА**\n"
+      f"━━━━━━━━━━━━━━━━━━━\n"
+      f"💬 По всем вопросам и отправке чеков обращайтесь к администратору:\n"
+      f"👉 Редкие вопросы и связь: @MNG_STABBY\n"
+      f"💳 Официальный кошелек: `{WALLET_NUMBER}`"
+  )
+  bot.send_message(
+      message.chat.id, contacts_text, parse_mode="Markdown", reply_markup=main_keyboard()
+  )
+
+
+# ==================== ВЫБОР ИГРЫ И ПАКЕТОВ ЧЕРЕЗ CALLBACK ====================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("game_"))
+def callback_choose_game(call):
+  game_name = call.data.replace("game_", "")
+  if game_name == "PUBG Mobile":
+    game_key = "🎮 PUBG Mobile"
+  else:
+    game_key = "🔥 Free Fire"
+
+  user_id = call.from_user.id
+  get_user_data(user_id)["state"] = {"game": game_key}
 
   markup = types.InlineKeyboardMarkup(row_width=1)
-
-  game_packages = PRICES.get(game_name, {})
+  game_packages = PRICES.get(game_key, {})
   for item_name, price in game_packages.items():
     markup.add(
         types.InlineKeyboardButton(
@@ -179,14 +236,32 @@ def choose_game(message):
         )
     )
 
-  markup.add(
-      types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_order")
+  markup.add(types.InlineKeyboardButton("⬅️ Назад к играм", callback_data="back_to_games"))
+
+  bot.answer_callback_query(call.id)
+  bot.edit_message_text(
+      f"🎯 Вы выбрали: **{game_key}**\n\n📦 **Выберите пакет пополнения:**",
+      call.message.chat.id,
+      call.message.message_id,
+      parse_mode="Markdown",
+      reply_markup=markup,
   )
 
-  bot.send_message(
-      message.chat.id,
-      f"🎯 Вы выбрали: **{game_name}**\n\n"
-      f"📦 **Выберите количество и пакет:**",
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_games")
+def callback_back_to_games(call):
+  markup = types.InlineKeyboardMarkup(row_width=2)
+  markup.add(
+      types.InlineKeyboardButton(
+          "🎮 PUBG Mobile", callback_data="game_PUBG Mobile"
+      ),
+      types.InlineKeyboardButton("🔥 Free Fire", callback_data="game_Free Fire"),
+  )
+  bot.answer_callback_query(call.id)
+  bot.edit_message_text(
+      "🎮 **Выберите нужную игру для пополнения:**",
+      call.message.chat.id,
+      call.message.message_id,
       parse_mode="Markdown",
       reply_markup=markup,
   )
@@ -211,14 +286,14 @@ def package_selected(call):
       types.InlineKeyboardButton(
           "🟢 Алиф Карта (Alif)", callback_data="pay_alif"
       ),
-      types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_order"),
+      types.InlineKeyboardButton("⬅️ Назад к пакетам", callback_data=f"game_{game_name.replace('🎮 ', '').replace('🔥 ', '')}"),
   )
 
   bot.answer_callback_query(call.id)
-  bot.send_message(
+  bot.edit_message_text(
+      f"📦 Выбран пакет: **{package_name}**\n💵 Стоимость: **{price} TJS**\n\n💳 **Выберите способ оплаты:**",
       call.message.chat.id,
-      f"📦 Вы выбрали: **{package_name}**\n💵 Стоимость: **{price} TJS**\n\n"
-      f"💳 **Выберите способ оплаты:**",
+      call.message.message_id,
       parse_mode="Markdown",
       reply_markup=markup,
   )
@@ -242,13 +317,13 @@ def payment_method_selected(call):
 
   cancel_markup = types.InlineKeyboardMarkup()
   cancel_markup.add(
-      types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_order")
+      types.InlineKeyboardButton("❌ Отмена заказа", callback_data="cancel_order")
   )
 
   bot.send_message(
       call.message.chat.id,
       f"✅ Способ оплаты: **{method_name}**\n\n"
-      f"✏️ **Отправьте ваш Player ID (ID в игре):**",
+      f"✏️ **Отправьте ваш Player ID (числовой ID игрока):**",
       parse_mode="Markdown",
       reply_markup=cancel_markup,
   )
@@ -262,7 +337,7 @@ def cancel_order(call):
   bot.answer_callback_query(call.id, "Заказ отменен")
   bot.send_message(
       call.message.chat.id,
-      "🔄 Операция отменена. Выберите действие в меню ниже:",
+      "🔄 Оформление заказа отменено. Воспользуйтесь меню ниже:",
       reply_markup=main_keyboard(),
   )
 
@@ -332,8 +407,10 @@ def process_player_id(message):
       f"🎁 Бонус: **{discount_note}**\n"
       f"💰 **Итого к оплате: {final_price:.1f} TJS**\n"
       f"━━━━━━━━━━━━━━━━━━━\n\n"
-      f"📌 **Что делать дальше?**\n"
-      f"Переведите **{final_price:.1f} TJS** на карту **{method}** и отправьте чек оператору для зачисления!"
+      f"📌 **Куда переводить деньги?**\n"
+      f"Переведите **{final_price:.1f} TJS** на номер **{method}**:\n"
+      f"👉 `{WALLET_NUMBER}`\n\n"
+      f"📲 После перевода отправьте скриншот/чек администратору!"
   )
 
   bot.send_message(
@@ -352,7 +429,7 @@ def process_player_id(message):
       f"🎮 Игра: **{game}**\n"
       f"📦 Пакет: **{package}**\n"
       f"🆔 Player ID: `{player_id}`\n"
-      f"💳 Оплата: **{method}**\n"
+      f"💳 Оплата: **{method}** (`{WALLET_NUMBER}`)\n"
       f"💰 К оплате: **{final_price:.1f} TJS**\n"
       f"━━━━━━━━━━━━━━━━━━━"
   )
@@ -372,6 +449,7 @@ def admin_panel(message):
       f"👑 **ПАНЕЛЬ АДМИНИСТРАТОРА**\n"
       f"━━━━━━━━━━━━━━━━━━━\n"
       f"📊 Зарегистрировано пользователей: **{active_users}**\n"
+      f"🟢 Номер кошелька: `{WALLET_NUMBER}`\n"
       f"🟢 Статус сервера: **Работает 24/7**\n"
       f"━━━━━━━━━━━━━━━━━━━",
       parse_mode="Markdown",
@@ -385,4 +463,4 @@ if __name__ == "__main__":
   web_thread.start()
 
   bot.infinity_polling()
-  
+    
