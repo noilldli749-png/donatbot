@@ -8,6 +8,9 @@ from telebot import types
 TOKEN = "8983343058:AAH35u-bqLnEFHWKK52yKwq1lc0Nx9BtUbc"
 ADMIN_ID = 6738122971
 
+# Юзернейм вашего канала (без @) для обязательной подписки
+CHANNEL_USERNAME = "your_channel_username" 
+
 # ВАШ НОМЕР ДЛЯ ОПЛАТЫ (Dushanbe City / Alif)
 WALLET_NUMBER = "+992006443155"
 
@@ -16,8 +19,6 @@ app = Flask(__name__)
 
 # База данных пользователей (в памяти)
 users_db = {}
-# Временное хранилище активных заказов, ожидающих проверки чека
-# Формат: user_id: {"game": ..., "package": ..., "price": ..., "method": ..., "player_id": ...}
 pending_orders = {}
 
 # ==================== ПРАЙС-ЛИСТ ====================
@@ -76,6 +77,29 @@ def get_user_data(user_id):
   return users_db[user_id]
 
 
+def check_sub(user_id):
+  if not CHANNEL_USERNAME or CHANNEL_USERNAME == "your_channel_username":
+    return True
+  try:
+    member = bot.get_chat_member(f"@{CHANNEL_USERNAME}", user_id)
+    return member.status in ["member", "administrator", "creator"]
+  except Exception:
+    return True
+
+
+def sub_keyboard():
+  markup = types.InlineKeyboardMarkup(row_width=1)
+  markup.add(
+      types.InlineKeyboardButton(
+          "📢 Подписаться на канал", url=f"https://t.me/{CHANNEL_USERNAME}"
+      ),
+      types.InlineKeyboardButton(
+          "✅ Я подписался", callback_data="check_subscription"
+      ),
+  )
+  return markup
+
+
 def main_keyboard():
   markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
   markup.add(
@@ -96,6 +120,15 @@ def send_welcome(message):
   user_data = get_user_data(user_id)
   args = message.text.split()
 
+  if not check_sub(user_id):
+    bot.send_message(
+        message.chat.id,
+        "🚀 **Для использования бота необходимо подписаться на наш официальный канал!**",
+        parse_mode="Markdown",
+        reply_markup=sub_keyboard(),
+    )
+    return
+
   if len(args) > 1 and user_data["referred_by"] is None:
     try:
       referrer_id = int(args[1])
@@ -103,13 +136,11 @@ def send_welcome(message):
         user_data["referred_by"] = referrer_id
         bot.send_message(
             message.chat.id,
-            "Вы успешно зарегистрировались по приглашению! Как только вы"
-            " совершите первую покупку, вашему другу засчитается реферал.",
+            "Вы успешно зарегистрировались по приглашению! Как только вы совершите первую покупку, вашему другу засчитается реферал.",
         )
         bot.send_message(
             referrer_id,
-            "По вашей ссылке зарегистрировался новый игрок! Реферал"
-            " засчитается после того, как он совершит покупку.",
+            "По вашей ссылке зарегистрировался новый игрок! Реферал засчитается после того, как он совершит покупку.",
         )
     except ValueError:
       pass
@@ -129,9 +160,31 @@ def send_welcome(message):
   bot.send_message(message.chat.id, welcome_text, reply_markup=main_keyboard())
 
 
+@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
+def callback_check_sub(call):
+  user_id = call.from_user.id
+  if check_sub(user_id):
+    bot.answer_callback_query(call.id, "✅ Спасибо за подписку!")
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    send_welcome(call.message)
+  else:
+    bot.answer_callback_query(
+        call.id, "❌ Вы еще не подписались на канал!", show_alert=True
+    )
+
+
 # ==================== КНОПКИ ГЛАВНОГО МЕНЮ ====================
 @bot.message_handler(func=lambda message: message.text == "🛍 Сделать заказ")
 def menu_order(message):
+  if not check_sub(message.from_user.id):
+    bot.send_message(
+        message.chat.id,
+        "🚀 **Для использования бота необходимо подписаться на канал!**",
+        parse_mode="Markdown",
+        reply_markup=sub_keyboard(),
+    )
+    return
+
   markup = types.InlineKeyboardMarkup(row_width=2)
   markup.add(
       types.InlineKeyboardButton(
@@ -169,9 +222,7 @@ def show_profile(message):
       "-----------------------------------\n\n"
       "Ваша персональная реферальная ссылка:\n"
       f"{ref_link}\n\n"
-      "Делитесь ссылкой с друзьями! Когда друг покупает UC или алмазы,"
-      " вам засчитывается 1 реферал. За каждые 10 таких рефералов вы получаете"
-      " скидку 10% на следующую покупку."
+      "Делитесь ссылкой с друзьями! Когда друг покупает UC или алмазы, вам засчитывается 1 реферал. За каждые 10 таких рефералов вы получаете скидку 10% на следующую покупку."
   )
 
   bot.send_message(
@@ -215,10 +266,7 @@ def show_contacts(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("game_"))
 def callback_choose_game(call):
   game_name = call.data.replace("game_", "")
-  if game_name == "PUBG Mobile":
-    game_key = "🎮 PUBG Mobile"
-  else:
-    game_key = "🔥 Free Fire"
+  game_key = "🎮 PUBG Mobile" if game_name == "PUBG Mobile" else "🔥 Free Fire"
 
   user_id = call.from_user.id
   get_user_data(user_id)["state"] = {"game": game_key}
@@ -290,8 +338,7 @@ def package_selected(call):
 
   bot.answer_callback_query(call.id)
   bot.edit_message_text(
-      f"📦 Выбран пакет: {package_name}\n💵 Стоимость: {price} TJS\n\n💳 Выберите"
-      " способ оплаты:",
+      f"📦 Выбран пакет: {package_name}\n💵 Стоимость: {price} TJS\n\n💳 Выберите способ оплаты:",
       call.message.chat.id,
       call.message.message_id,
       reply_markup=markup,
@@ -323,8 +370,7 @@ def payment_method_selected(call):
 
   bot.send_message(
       call.message.chat.id,
-      f"✅ Способ оплаты: {method_name}\n\n"
-      "✏️ Отправьте ваш Player ID (числовой ID игрока):",
+      f"✅ Способ оплаты: {method_name}\n\n✏️ Отправьте ваш Player ID (числовой ID игрока):",
       reply_markup=cancel_markup,
   )
 
@@ -355,7 +401,7 @@ def process_player_id(message):
   player_id = message.text.strip()
   user_data["state"]["player_id"] = player_id
   user_data["state"]["awaiting_id"] = False
-  user_data["state"]["awaiting_receipt"] = True  # Ждем чек от пользователя
+  user_data["state"]["awaiting_receipt"] = True
 
   game = user_data["state"].get("game", "Игра")
   package = user_data["state"].get("package", "Пакет")
@@ -365,7 +411,7 @@ def process_player_id(message):
   has_discount = user_data["discounts_available"] > 0
   if has_discount:
     user_data["discounts_available"] -= 1
-    final_price = base_price * 0.9  # Скидка 10%
+    final_price = base_price * 0.9
     discount_note = "Применена одноразовая скидка 10% 🎉"
   else:
     final_price = base_price
@@ -414,7 +460,6 @@ def handle_receipt(message):
   method = state.get("method", "Карта")
   final_price = state.get("final_price", 0)
 
-  # Сохраняем во временное хранилище для админа
   pending_orders[user_id] = {
       "user_id": user_id,
       "game": game,
@@ -425,17 +470,13 @@ def handle_receipt(message):
 
   bot.reply_to(
       message,
-      "⏳ **Чек принят!** Он отправлен администратору на проверку. Ожидайте"
-      " зачисления в течение нескольких минут.",
+      "⏳ **Чек принят!** Он отправлен администратору на проверку. Ожидайте зачисления в течение нескольких минут.",
       parse_mode="Markdown",
   )
 
-  # Кнопки для администратора под чеком
   admin_markup = types.InlineKeyboardMarkup(row_width=2)
   admin_markup.add(
-      types.InlineKeyboardButton(
-          "✅ Одобрить", callback_data=f"approve_{user_id}"
-      ),
+      types.InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user_id}"),
       types.InlineKeyboardButton("❌ Отказать", callback_data=f"reject_{user_id}"),
   )
 
@@ -451,7 +492,6 @@ def handle_receipt(message):
       "-----------------------------------"
   )
 
-  # Берем самое качественное фото чека
   photo_id = message.photo[-1].file_id
   bot.send_photo(
       ADMIN_ID,
@@ -463,10 +503,14 @@ def handle_receipt(message):
 
 
 # ==================== КНОПКИ УПРАВЛЕНИЯ ДЛЯ АДМИНА ====================
-@bot.callback_query_handler(func=lambda call: call.data.startswith(("approve_", "reject_")))
+@bot.callback_query_handler(
+    func=lambda call: call.data.startswith(("approve_", "reject_"))
+)
 def admin_decision(call):
   if call.from_user.id != ADMIN_ID:
-    bot.answer_callback_query(call.id, "⛔ У вас нет прав администратора.", show_alert=True)
+    bot.answer_callback_query(
+        call.id, "⛔ У вас нет прав администратора.", show_alert=True
+    )
     return
 
   action, target_user_id_str = call.data.split("_")
@@ -475,12 +519,8 @@ def admin_decision(call):
   bot.answer_callback_query(call.id)
 
   if action == "approve":
-    # 1. Начисляем реферал (если клиент чей-то реферал и еще не покупал)
     target_data = get_user_data(target_user_id)
-    if (
-        target_data["referred_by"]
-        and not target_data["has_contributed"]
-    ):
+    if target_data["referred_by"] and not target_data["has_contributed"]:
       target_data["has_contributed"] = True
       ref_id = target_data["referred_by"]
       if ref_id in users_db:
@@ -489,29 +529,23 @@ def admin_decision(call):
           users_db[ref_id]["discounts_available"] += 1
           bot.send_message(
               ref_id,
-              "🎉 Поздравляем! Один из ваших приглашенных друзей успешно"
-              " оплатил заказ. Вы накопили 10 рефералов и получили одноразовую"
-              " скидку 10%!",
+              "🎉 Поздравляем! Один из ваших приглашенных друзей успешно оплатил заказ. Вы накопили 10 рефералов и получили одноразовую скидку 10%!",
           )
         else:
           bot.send_message(
               ref_id,
-              "👥 Ваш приглашенный друг совершил и оплатил покупку! Вам"
-              " зачислен 1 реферал.",
+              "👥 Ваш приглашенный друг совершил и оплатил покупку! Вам зачислен 1 реферал.",
           )
 
-    # 2. Уведомляем клиента об успешной оплате
     try:
       bot.send_message(
           target_user_id,
-          "✅ **Оплата успешно подтверждена администратором!**\n\n"
-          "Ваш заказ передан в обработку, UC / алмазы будут зачислены на ваш аккаунт в течение 2–3 минут. Спасибо, что выбрали нас! 🚀",
+          "✅ **Оплата успешно подтверждена администратором!**\n\nВаш заказ передан в обработку, UC / алмазы будут зачислены на ваш аккаунт в течение 2–3 минут. Спасибо, что выбрали нас! 🚀",
           parse_mode="Markdown",
       )
     except Exception:
       pass
 
-    # Обновляем сообщение у админа
     bot.edit_message_caption(
         call.message.chat.id,
         call.message.message_id,
@@ -521,18 +555,15 @@ def admin_decision(call):
     )
 
   elif action == "reject":
-    # Уведомляем клиента об отказе
     try:
       bot.send_message(
           target_user_id,
-          "❌ **К сожалению, ваша оплата была отклонена администратором.**\n\n"
-          "Возникла проблема с чеком или переводом. Пожалуйста, обратитесь в поддержку: @MNG_STABBY",
+          "❌ **К сожалению, ваша оплата была отклонена администратором.**\n\nВозникла проблема с чеком или переводом. Пожалуйста, обратитесь в поддержку: @MNG_STABBY",
           parse_mode="Markdown",
       )
     except Exception:
       pass
 
-    # Обновляем сообщение у админа
     bot.edit_message_caption(
         call.message.chat.id,
         call.message.message_id,
